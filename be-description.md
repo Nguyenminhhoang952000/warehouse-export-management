@@ -86,20 +86,25 @@
 - All money values in response are float number.
 - Examples: `totalAmount`, `discountAmount`, `finalAmount`, `basePrice`, `totalRevenue`.
 
+### 4.6 Database Naming & Aliasing
+- Database tables and columns use strict `snake_case` (e.g. `created_at`, `total_amount`).
+- TypeORM aliases these to `camelCase` properties, which perfectly match the API JSON bodies and TypeScript DTOs.
+- Do NOT expose `snake_case` in the API output.
+
 ## 5. Enums
 
 ### 5.1 UserRole
-- `sales`
-- `accountant`
-- `manager`
+- `SALES`
+- `ACCOUNTANT`
+- `MANAGER`
 
 ### 5.2 UserStatus
 - `ACTIVE`
 - `INACTIVE`
 
 ### 5.3 LoginType
-- `local`
-- `google`
+- `LOCAL`
+- `GOOGLE`
 
 ### 5.4 OrderStatus
 - `OPEN`
@@ -107,12 +112,6 @@
 - `TOTAL_COMPLETED`
 - `DEBT_COMPLETED`
 - `FAILURE`
-
-### 5.5 Unit
-- `thung`
-- `chai`
-- `cai`
-- `lo`
 
 ## 6. Error Code Catalog
 
@@ -147,6 +146,8 @@
 ### 6.5 Products
 - `PRODUCT_NOT_FOUND`
 - `PRODUCT_NAME_ALREADY_EXISTS`
+- `PRODUCT_UNIT_NOT_FOUND`
+- `PRODUCT_UNIT_NAME_ALREADY_EXISTS`
 
 ### 6.6 Orders
 - `ORDER_NOT_FOUND`
@@ -182,24 +183,31 @@
 - `createdAt`, `updatedAt`
 
 ### 7.3 CustomerData
-- `id`, `name`, `phone`, `address`, `latitude`, `longitude`
+- `id`, `name`, `phone`, `address`
+- `latitude`: string or null
+- `longitude`: string or null
 - `createdAt`, `updatedAt`
 
 ### 7.4 ProductData
-- `id`, `name`, `basePrice`
+- `id`, `name`, `basePrice`, `imageUrl`
 - `createdAt`, `updatedAt`
 
 ### 7.5 OrderItemData
 - `id`, `productId`, `productName`
-- `unit`, `quantity`
-- `price`, `discount`, `commission`, `total`
+- `unitId`, `unitName`, `quantity`
+- `price`, `discount`, `commission`, `itemTotal`
 
 ### 7.6 OrderData
 - `id`, `customerId`, `salesId`, `status`
 - `customerName`, `customerPhone`, `customerAddress`
-- `latitude`, `longitude`
+- `latitude`: string or null
+- `longitude`: string or null
 - `totalAmount`, `discountAmount`, `finalAmount`
 - `items`: OrderItemData[]
+- `createdAt`, `updatedAt`
+
+### 7.7 ProductUnitData
+- `id`, `productId`, `name`
 - `createdAt`, `updatedAt`
 
 ## 8. API Details By Endpoint
@@ -505,6 +513,57 @@
   - `VALIDATION_ERROR`
   - `FORBIDDEN`
 
+### GET /api/product-units
+- Auth: manager, sales, accountant
+- Query:
+  - `productId`, `page`, `pageSize`, `search`, `sort`
+- Success 200:
+  - `message`: `Get product units successfully`
+  - `data` item:
+    - `id`, `productId`, `name`
+  - `meta`: pagination
+- Error codes:
+  - `VALIDATION_ERROR`
+  - `FORBIDDEN`
+
+### POST /api/product-units
+- Auth: manager
+- Body:
+  - `productId`
+  - `name`
+- Success 200:
+  - `message`: `Create product unit successfully`
+  - `data`: ProductUnitData
+- Error codes:
+  - `VALIDATION_ERROR`
+  - `PRODUCT_NOT_FOUND`
+  - `PRODUCT_UNIT_NAME_ALREADY_EXISTS`
+  - `FORBIDDEN`
+
+### PUT /api/product-units/:id
+- Auth: manager
+- Body:
+  - `name`
+- Success 200:
+  - `message`: `Update product unit successfully`
+  - `data`: ProductUnitData
+- Error codes:
+  - `VALIDATION_ERROR`
+  - `PRODUCT_UNIT_NOT_FOUND`
+  - `PRODUCT_UNIT_NAME_ALREADY_EXISTS`
+  - `FORBIDDEN`
+
+### DELETE /api/product-units/:id
+- Auth: manager
+- Success 200:
+  - `message`: `Delete product unit successfully`
+  - `data`:
+    - `deleted`: true
+    - `id`: number
+- Error codes:
+  - `PRODUCT_UNIT_NOT_FOUND`
+  - `FORBIDDEN`
+
 ### GET /api/products/prices
 - Auth: manager, sales, accountant
 - Query:
@@ -520,7 +579,7 @@
     - `timeline`:
       - `date`: ISO datetime
       - `price`: number
-      - `unit`: Unit
+      - `unitName`: string
       - `orderId`: number
   - `meta`: pagination
 - Error codes:
@@ -552,8 +611,8 @@
     - `discountAmount`: number
     - `finalAmount`: number
     - `status`
-    - `latitude`: number or null
-    - `longitude`: number or null
+    - `latitude`: string or null
+    - `longitude`: string or null
     - `address`
     - `createdAt`
   - `meta`: pagination
@@ -580,7 +639,7 @@
   - `longitude` optional
   - `items`:
     - `productId`
-    - `unit`
+    - `unitId`
     - `quantity`
     - `price`
     - `discount`
@@ -690,7 +749,7 @@
 3. sales
 - Access: auth endpoints, customers CRUD and selection, products read and selection/prices, orders CRUD within ownership policy, users selection.
 - No users CRUD.
-- No dashboard.
+- Dashboard: Set permissions so they can only view their own sales figures; they cannot view the sales figures of other sales staff.
 
 ## 10. Non-Functional Requirements
 1. Global ValidationPipe with strict DTO validation.

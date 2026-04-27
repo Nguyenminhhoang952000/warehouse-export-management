@@ -1,287 +1,197 @@
-# Warehouse Spec
+# Warehouse Management System Specification
 
-## 1) Database
+## 1. Final Database Schema
+All tables include strict audit columns: `created_at`, `updated_at`, `deleted_at` (for soft deletes), `created_by`, `updated_by`, `deleted_by`. Money fields are stored as `DECIMAL(15,2)`. Indexes are included for search and filtering optimization.
 
-### 1.1 Base audit columns (applies to all tables)
-- createdAt
-- updatedAt
-- deletedAt
-- createdBy
-- updatedBy
-- deletedBy
+### 1.1 `users`
+- `id` (PK)
+- `email` (VARCHAR, Unique, Indexed)
+- `password_hash` (VARCHAR, Nullable for Google logins)
+- `name` (VARCHAR, Indexed)
+- `phone` (VARCHAR, Unique, Nullable)
+- `role` (ENUM: `SALES` | `ACCOUNTANT` | `MANAGER`, Indexed)
+- `status` (ENUM: `ACTIVE` | `INACTIVE`)
+- `google_id` (VARCHAR, Unique, Nullable, Indexed)
 
-### 1.2 users
-- id
-- email
-- passwordHash
-- name
-- phone
-- role (sales | accountant | manager)
-- status (ACTIVE | INACTIVE)
-- googleId
+### 1.2 `user_sessions`
+- `id` (PK)
+- `user_id` (FK to `users`, Indexed)
+- `refresh_token_hash` (VARCHAR, Not Null - Hashed for security)
+- `login_type` (ENUM: `LOCAL` | `GOOGLE`)
+- `user_agent` (VARCHAR)
+- `ip` (VARCHAR)
+- `expired_at` (TIMESTAMP, Indexed for automated cleanup)
 
-### 1.3 user_sessions
-- id
-- userId
-- refreshToken
-- loginType (local | google)
-- userAgent
-- ip
-- expiredAt
+### 1.3 `customers`
+- `id` (PK)
+- `name` (VARCHAR, Indexed)
+- `phone` (VARCHAR, Unique, Indexed)
+- `address` (TEXT)
+- `latitude` VARCHAR
+- `longitude` VARCHAR
 
-### 1.4 customers
-- id
-- name
-- phone
-- address
-- latitude
-- longitude
+### 1.4 `products`
+- `id` (PK)
+- `name` (VARCHAR, Unique, Indexed)
+- `base_price` (DECIMAL(15,2), >= 0)
+- `image_url` (TEXT, Nullable)
 
-### 1.5 products
-- id
-- name
-- basePrice
+### 1.5 `product_units`
+- `id` (PK)
+- `product_id` (FK to `products`, Indexed)
+- `name` (VARCHAR, Unique) *(e.g., thùng, chai, cái, lọ)*
 
-### 1.6 orders
-- id
-- customerId
-- salesId
-- status (OPEN | SHIPPING | TOTAL_COMPLETED | DEBT_COMPLETED | FAILURE)
-- createdAt
-- updatedAt
-- totalAmount
-- discountAmount
-- finalAmount
+### 1.6 `orders`
+- `id` (PK)
+- `customer_id` (FK to `customers`, Indexed)
+- `sales_id` (FK to `users`, Indexed)
+- `status` (ENUM: `OPEN` | `SHIPPING` | `TOTAL_COMPLETED` | `DEBT_COMPLETED` | `FAILURE`, Indexed)
+- `total_amount` (DECIMAL(15,2), >= 0)
+- `discount_amount` (DECIMAL(15,2), >= 0)
+- `final_amount` (DECIMAL(15,2), >= 0)
+- **Snapshot Fields** (Copied at creation for historical accuracy):
+  - `customer_name` (VARCHAR)
+  - `customer_phone` (VARCHAR)
+  - `customer_address` (TEXT)
+  - `latitude` VARCHAR
+  - `longitude` VARCHAR
+- **Indexes:** `(sales_id, status)`, `(customer_id, status)`, `(created_at)`
 
-Snapshot fields (copy từ customer tại thời điểm mua):
-- customerName
-- customerPhone
-- customerAddress
+### 1.7 `order_items`
+- `id` (PK)
+- `order_id` (FK to `orders`, Indexed)
+- `product_id` (FK to `products`, Indexed)
+- `unit_id` (FK to `product_units`)
+- `unit_name` (VARCHAR, Snapshot from `product_units` at creation)
+- `quantity` (INT, > 0)
+- `price` (DECIMAL(15,2), >= 0, Snapshot from `products.base_price`)
+- `discount` (DECIMAL(15,2), >= 0, Per item)
+- `commission` (DECIMAL(15,2), >= 0)
+- `item_total` (DECIMAL(15,2), >= 0)
 
-### 1.7 order_items
-- id
-- orderId
-- productId
-- unit (thùng | chai | cái | lọ)
-- quantity
-- price (giá per unit, snapshot từ product khi tạo order)
-- discount
-- commission
-- total
+---
 
-## 2) API (`/api/...`)
+## 2. Final API Design
+**Rules:**
+- DB fields are strictly `snake_case`, but TypeORM must alias all fields to `camelCase` for cleaner usage in Backend code and JSON responses.
+- ALL JSON responses use the Common API Envelope (`success`, `message`, `data`, `error`, `meta`).
+- ALL money fields return as `NUMBER` (float).
+- ALL list endpoints support: `page`, `pageSize`, `sort` (`field:dir`), and context-specific `search`.
+- List responses exclude soft-deleted records by default.
 
 ### 2.1 Auth
-- POST /auth/login
-- POST /auth/google
-- GET /auth/me
+- **`POST /api/auth/login`**: Accepts `email`, `password`.
+- **`POST /api/auth/google`**: Accepts `idToken`.
+- **`POST /api/auth/refresh`**: Accepts `refreshToken`.
+- **`POST /api/auth/logout`**: Accepts `refreshToken` (Invalidates session).
+- **`GET /api/auth/me`**: Returns current UserData.
 
 ### 2.2 Users
-- GET /users
-- GET /users/:id
-- POST /users
-- PUT /users/:id
-- DELETE /users/:id
-- GET /users/selection (list id + name, hỗ trợ search name)
+- **Search fields**: `name`, `email`
+- `GET /api/users` *(Filters: role, status)*
+- `GET /api/users/:id`
+- `POST /api/users`
+- `PUT /api/users/:id`
+- `DELETE /api/users/:id`
+- `GET /api/users/selection` *(Provides `id`, `name` without pagination overhead)*
 
 ### 2.3 Customers
-- GET /customers
-- GET /customers/:id
-- POST /customers
-- PUT /customers/:id
-- DELETE /customers/:id
-- GET /customers/selection (list id + name, hỗ trợ search name)
+- **Search fields**: `name`, `phone`
+- `GET /api/customers` *(Includes `totalOrders`, `totalSpent`)*
+- `GET /api/customers/:id`
+- `POST /api/customers`
+- `PUT /api/customers/:id`
+- `DELETE /api/customers/:id`
+- `GET /api/customers/selection`
 
-### 2.4 Products
-- GET /products
-- GET /products/:id
-- POST /products
-- PUT /products/:id
-- DELETE /products/:id
-- GET /products/selection (list id + name, hỗ trợ search name)
-- GET /products/prices (list historical prices from completed orders)
+### 2.4 Products & Units
+- **Search fields**: `name`
+- `GET /api/products` *(Includes `totalRevenue`)*
+- `GET /api/products/:id`
+- `POST /api/products`
+- `PUT /api/products/:id`
+- `DELETE /api/products/:id`
+- `GET /api/products/selection`
+- `GET /api/product-units` *(List available units for forms)*
+- `POST /api/product-units`
+- `PUT /api/product-units/:id`
+- `DELETE /api/product-units/:id`
+- `GET /api/products/prices` *(Accepts `productId` filter. Returns price history timeline from completed orders)*
 
 ### 2.5 Orders
-- GET /orders
-- GET /orders/:id
-- POST /orders
-- PUT /orders/:id
-- DELETE /orders/:id
-- POST /orders/:id/generate-pdf
+- **Search fields**: `customerName`, `id`
+- `GET /api/orders` *(Filters: fromDate, toDate, status, salesId, customerId)*
+- `GET /api/orders/:id`
+- `POST /api/orders`
+- `PUT /api/orders/:id`
+- `DELETE /api/orders/:id`
+- `POST /api/orders/:id/generate-pdf`
 
 ### 2.6 Dashboard
-- GET /dashboard
+- `GET /api/dashboard` *(Filters: preset ranges or fromDate/toDate. Returns revenue metrics, stats by status, top products, top sales)*
 
-## 3) List Views and Filters
+---
 
-### 3.1 Orders list
-Fields:
-- id
-- customer.name
-- customer.phone
-- sales.name
-- totalItems
-- totalQuantity
-- totalAmount
-- discountAmount
-- finalAmount
-- status
-- latitude
-- longitude
-- address
-- createdAt
+## 3. Order Flow
 
-Filters:
-- page
-- pageSize
-- fromDate
-- toDate
-- status
-- salesId
-- customerId
-- search (customer name / order id)
+### 3.1 Order Calculations (ENFORCED IN BACKEND)
+- Input: `items` containing `productId`, `unitId`, `quantity`, `discount`, `commission`.
+- Operation must run in a **Database Transaction**.
+- **Formula applied per item:** `price` (from DB snapshot) -> `itemTotal = (quantity * price)`.
+- **Formula applied to order:**
+  - `totalAmount = sum(itemTotal)`
+  - `discountAmount = sum(discount per item)`
+  - `finalAmount = totalAmount - discountAmount`
+- Backend ensures `quantity > 0`, `price >= 0`, `discount >= 0`, and `finalAmount >= 0`.
 
-### 3.2 Customers list
-Fields:
-- id
-- name
-- phone
-- address
-- totalOrders
-- totalSpent
-- createdAt
+### 3.2 Create & Update
+- **Create:** 
+  - Frontend sends `customerId`, `items`, optional `latitude`/`longitude`.
+  - Backend creates `order`, copies snapshot info (`customerName`, `customerPhone`, `customerAddress`, geolocation) and creates `order_items`. Default status is `OPEN`.
+- **Update:** 
+  - Backend wipes and replaces old `order_items` array (recalculates financial totals inside the transaction).
+  - Validation ensures status transitions are valid.
 
-Filters:
-- page
-- pageSize
-- search (name / phone)
+### 3.3 Status Lifecycle Transitions (Strict)
+- `OPEN` -> `SHIPPING`
+- `SHIPPING` -> (`TOTAL_COMPLETED` | `DEBT_COMPLETED` | `FAILURE`)
+- Invalid transitions are rejected with `ORDER_STATUS_TRANSITION_INVALID`.
 
-### 3.3 Products list
-Fields:
-- id
-- name
-- basePrice
-- totalRevenue
-- createdAt
+### 3.4 Delivery & PDF
+- Delivery staff uses the snapshotted geolocation coordinates `latitude` and `longitude` provided when the order was placed to ensure accurate historical delivery data.
+- PDF generation `/api/orders/:id/generate-pdf` generates the invoice synchronously. Product images (`imageUrl`) **are strictly omitted** from the PDF template.
 
-Filters:
-- page
-- pageSize
-- search (name)
+---
 
-### 3.4 Users list
-Fields:
-- id
-- name
-- role
-- status
-- totalOrders
-- totalRevenue
-- createdAt
+## 4. Price History Flow
 
-Filters:
-- page
-- pageSize
-- role
-- status
-- search (name / email)
+### 4.1 Frontend Behavior
+- During order creation/editing, when a product is selected, the UI displays its `imageUrl` alongside a "**View price history**" button.
+- Clicking the button opens a modal.
+- The UI triggers `GET /api/products/prices?productId={id}`.
 
-### 3.5 Sorting
-- Tất cả table list hỗ trợ sort bằng cách bấm mũi tên ở tên field, trừ field `id`.
+### 4.2 Backend Behavior
+- The `GET /api/products/prices` endpoint queries `order_items` paired with `orders`.
+- Filters records where `order_items.productId = requestedId`.
+- Restricts bounds to orders where `orders.status IN ('TOTAL_COMPLETED', 'DEBT_COMPLETED')`.
+- Returns a timeline payload grouped with ISO date (`orders.createdAt`), `price`, `unitName`, and `orderId`, matching the unified API response model.
 
-## 4) Tech Stack
-- Backend: NestJS
-- Database: PostgreSQL
-- Frontend: React (build static)
-- Infra: Docker (full local + production build)
-- Nginx:
-	- `/api` proxy tới backend
-	- `/` serve static frontend
-- Services: app, db
-- Domain / DNS: Cloudflare
-- VPS minimum:
-	- RAM > 2 GB
-	- CPU 2 cores
+---
 
-## 5) Open Questions
-1. User có thể tự tạo tài khoản, hay chỉ manager tạo?
-	 - Suggest: chỉ manager được tạo user để tránh data thừa.
-2. Phone/address đi theo từng order hay lấy từ customer hiện tại?
-3. Dashboard cần hiển thị chính xác các widget nào?
-	 - Suggest:
-		 - Tổng doanh thu
-		 - Số đơn theo status
-		 - Doanh thu theo thời gian
-		 - Top sản phẩm
-		 - Top sales
-4. Trên phiếu giao hàng, `unit` đi theo product hay theo order item?
-5. Có cần config giá theo từng unit trong product settings không?
-6. Công thức tính tiền chuẩn là gì?
+## 5. RBAC and Ownership Rules
 
-## 6) Estimate Timeline (ET)
+### 5.1 Manager
+- Full access to all endpoints across all systems (Auth, Users, Customers, Products, Orders, Dashboard, Configs).
 
-### 6.1 Database (1.5d)
-- Design schema chuẩn production
-- Tạo migration (tables + enum)
-- Setup index
-- Seed data mẫu
+### 5.2 Accountant
+- Global **Read-Only** access for lists/details: Users, Customers, Products, Prices, Orders, Dashboard.
+- Cannot `Create/Update/Delete` core entities.
+- Allowed to generate Order PDFs.
 
-### 6.2 Auth (1d)
-- Login (email/password)
-- Login Google
-- Refresh token
-- Middleware auth + role
-
-### 6.3 User Module (1.5d)
-- CRUD user
-- Role & permission
-- User selection API
-- Validate (email unique, role...)
-
-### 6.4 Customer Module (1.5d)
-- CRUD customer
-- Customer selection API
-- Search + pagination
-- Map (lat/lng support)
-
-### 6.5 Product Module (1.5d)
-- CRUD product
-- Product selection API
-- Search + pagination
-
-### 6.6 Order Module (2d)
-- Create order (with items)
-- Update order
-- Delete order
-- Get order detail
-- List order (filter + sort + pagination)
-- Calculate total (items, amount, discount...)
-- Snapshot customer + product
-
-### 6.7 PDF (1d)
-- Generate invoice PDF
-- Template HTML -> PDF
-- Attach order data
-
-### 6.8 Dashboard (1.5d)
-- Tổng doanh thu
-- Số đơn theo status
-- Doanh thu theo thời gian
-- Top sản phẩm
-- Top sales
-
-### 6.9 Search / Filter / Sort (1d)
-- Global pagination
-- Filter (date, status, user...)
-- Sort (createdAt, revenue...)
-- Search (name, phone, id...)
-
-### 6.10 DevOps (1.5d)
-- Dockerfile (dev + prod)
-- Docker compose (app + db + nginx)
-- Env config
-- Nginx config
-- VPS setup
-- Domain + Cloudflare
-- Build & deploy frontend
-- SSL setup
+### 5.3 Sales
+- **Ownership Constraint:** Sales staff can only `GET`, `UPDATE`, and `DELETE` their own generated orders. Requests targeting orders belonging to different sales reps return `403 FORBIDDEN` or exclude unauthorized records from the list query automatically.
+- **Customers:** Full CRUD capabilities and selection lists.
+- **Products:** Read-only access and listing capabilities (including price history and product selections).
+- **Users:** Read-only access via selection list.
+- **Dashboard:** Set permissions so they can only view their own sales figures; they cannot view the sales figures of other sales staff.
+- Allowed to generate Order PDFs for their authored orders.
