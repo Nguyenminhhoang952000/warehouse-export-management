@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: warehouse_db_prod
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-warehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
+    volumes:
+      - warehouse_db_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-warehouse} -d ${POSTGRES_DB:-warehouse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  be:
+    build:
+      context: ./warehouse-management-be
+      dockerfile: Dockerfile
+    container_name: warehouse_be_prod
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER:-warehouse}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-warehouse}
+      DB_NAME: ${POSTGRES_DB:-warehouse}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+    expose:
+      - "3000"
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: warehouse_nginx_prod
+    restart: always
+    depends_on:
+      - be
+    ports:
+      - "80:80"
+
+volumes:
+  warehouse_db_prod_data:
